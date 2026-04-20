@@ -6,13 +6,14 @@ on:
             - master
         paths:
             - "cluster/**" # Uruchom tylko gdy zmienia się coś w folderze z chartem
+    workflow_dispatch:
 
 jobs:
     release:
         runs-on: ubuntu-latest
         permissions:
             contents: read
-            packages: write # Wymagane do zapisu w GHCR
+            packages: write
 
         steps:
             - name: Checkout code
@@ -29,14 +30,15 @@ jobs:
 
             - name: Package and Push Helm Chart
               run: |
-                  # 1. Pobieramy wersję z Chart.yaml
-                  CHART_NAME=$(grep '^name:' charts/postgres/Chart.yaml | awk '{print $2}')
-                  CHART_VERSION=$(grep '^version:' charts/postgres/Chart.yaml | awk '{print $2}')
+                  # 1. Pobieramy dane z właściwego folderu 'cluster'
+                  CHART_NAME=$(grep '^name:' cluster/Chart.yaml | awk '{print $2}')
+                  CHART_VERSION=$(grep '^version:' cluster/Chart.yaml | awk '{print $2}')
 
                   echo "Packaging chart $CHART_NAME version $CHART_VERSION"
 
-                  # 2. Pakujemy chart (tworzy plik .tgz)
-                  helm package charts/postgres
+                  # 2. Pakujemy folder 'cluster'
+                  helm package cluster
 
-                  # 3. Wypychamy do GHCR (jako OCI artifact)
-                  helm push ${CHART_NAME}-${CHART_VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+                  # 3. Wypychamy do GHCR (z małych liter dla pewności)
+                  REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+                  helm push ${CHART_NAME}-${CHART_VERSION}.tgz oci://ghcr.io/${REPO_OWNER}/charts
