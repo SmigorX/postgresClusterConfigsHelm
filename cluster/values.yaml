@@ -1,21 +1,15 @@
-# Postgres DB cluster and related resources configuration
+# configuration for CloudNativePG cluster
 cluster:
-    #name of cluster
     name: postgres-cluster
-    #namespace for the cluster and related resources like secrets and gateway
-    namespace: postgres-cluster
-    #Description of the cluster
-    description: "WMS_DEV tools postgres cluster"
+    namespace: postgres-system
+    description: "High-availability PostgreSQL cluster"
 
-    #Postgres image, pinned to specific version
     image: ghcr.io/cloudnative-pg/postgresql:15.4
 
-    #Number of instances in the cluster
     instances: 3
-    # MIN AVAILABLE INSTANCES (Pod Disruption Budget)
-    # Zapewnia, że podczas aktualizacji K8s zawsze np. 1 instancja będzie działać
+    # PodDisruptionBudget
     minAvailable: 1
-    # RESOURCE LIMITS
+
     resources:
         requests:
             memory: "1Gi"
@@ -24,119 +18,97 @@ cluster:
             memory: "2Gi"
             cpu: "1"
 
-    #Enable superuser access from outside
-    enableExternalSuperuserAccess: false
-    #Storage resource to use
     storage:
-        storageClass: csi-rbd-sc
+        storageClass: standard
         size: 10Gi
 
-    #Enable Prometheus monitoring,
     monitoring: true
+    enableExternalSuperuserAccess: false
 
-#S3 backups
+# Backup configuration (S3/Object Storage)
 backup:
-    #Whether cluster should be backend up
-    enable: true
-    #Bucket path
-    destinationPath: s3://postgres-backups/main-cluster
-    #S3 endpoint URL
-    endpointURL: http://s3.internal.wmsdev.pl:7480
-    #Backup retention time
+    enabled: true
+    destinationPath: s3://my-postgres-backups/main-cluster
+    endpointURL: https://s3.amazonaws.com
     retentionPolicy: "30d"
-    #Backup schedule in cron format
     schedule: "0 0 0 * * *"
-    #Secret with S3 connection credentials
     backupCredentialsSecret:
-        source: vault # vault or create
+        source: vault # Options: vault, create
         createSecret:
-            #Secret name
             name: backup-creds
-            #S3 user connection credentials
-            ACCESS_KEY_ID: <your_access_key_id_here>
-            ACCESS_SECRET_KEY: <your_secret_access_key_here>
+            ACCESS_KEY_ID: "example-key"
+            ACCESS_SECRET_KEY: "example-secret"
         pullSecretFromVault:
             name: backup-creds
-            path: postgres/backup-s3-credentials
+            path: secret/data/postgres/backup
 
+# External access via LoadBalancer for Cilium
 externalAccess:
     enabled: true
     endpoints:
-        #Read-write endpoint
-        - name: pg-rw
+        - name: primary
           port: 5432
-          ip: 10.0.10.69
-          #RW connects to primary instance
+          ip: 192.168.1.100
           role: primary
-        #Read-only endpoint
-        - name: pg-ro
+        - name: replica
           port: 5432
-          ip: 10.0.10.67
-          #RO connects to replica instances
+          ip: 192.168.1.101
           role: replica
 
+# Database initialization and recovery
 database:
-    strategy: initdb # initdb or recovery
+    strategy: initdb # Options: initdb, recovery
     recovery:
         sourceName: s3-backup-src
-        #S3 backup source for cluster initialization
-        destinationPath: s3://postgres-backups/main-cluster
-        endpointURL: http://s3.internal.wmsdev.pl:7480
+        destinationPath: s3://my-postgres-backups/main-cluster
+        endpointURL: https://s3.amazonaws.com
         bootstrapS3CredentialsSecret:
-            source: vault # vault or create
+            source: vault
             createSecret:
                 name: bootstrap-creds
-                ACCESS_KEY_ID: <your_access_key_id_here>
-                ACCESS_SECRET_KEY: <your_secret>
+                ACCESS_KEY_ID: "example-key"
+                ACCESS_SECRET_KEY: "example-secret"
             pullSecretFromVault:
                 name: bootstrap-creds
-                path: postgres/boostrap-s3-credentials
+                path: secret/data/postgres/bootstrap
 
     initdb:
-        # Pierwsza baza na liście zawsze staje się bazą 'primary' dla Operatora
         databases:
             - name: app_db
               owner: app_user
               encoding: UTF8
               locale: en_US.UTF-8
-            - name: reporting_db
+            - name: analytics_db
               owner: app_user
 
-        # Globalny skrypt inicjalizacyjny (np. rozszerzenia, schematy)
-        # Zostanie wrzucony do postInitApplicationSQL
         postInitScript:
-            enabled: true
-            configMapName: postgres-init-script # Opcjonalnie, jeśli wolisz CM
+            enabled: false
             script: |
-                CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-                -- Tu już nie robisz CREATE DATABASE, bo zrobi to pętla z listy powyżej
+                # CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                #CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
 
+# Users and Access Control
 users:
-    #Postgres superuser account
     superuserSecret:
-        source: vault # vault or create
-        #Whether chart should create the secret, set to false to use existing secret
+        source: vault
         createSecret:
-            #Name of the secret
-            name:
-                postgres-cluster-superuser
-                #Superuser credentials
+            name: postgres-superuser
             username: postgres
-            password: <your_superuser_password_here>
+            password: "change-me-securely"
         pullSecretFromVault:
-            name: postgres-cluster-superuser
-            path: postgres/superuser
+            name: postgres-superuser
+            path: secret/data/postgres/superuser
 
     roles:
         - name: app_user
           login: true
           superuser: false
           credentialsSecret:
-              source: vault # vault or create
+              source: vault
               createSecret:
                   name: app-user-creds
                   username: app_user
-                  password: <your_app_user_password_here>
+                  password: "change-me-securely"
               pullSecretFromVault:
                   name: app-user-creds
-                  path: postgres/app_user
+                  path: secret/data/postgres/app_user
