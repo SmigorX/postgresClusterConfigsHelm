@@ -5,7 +5,7 @@ on:
         branches:
             - master
         paths:
-            - "cluster/**" # Uruchom tylko gdy zmienia się coś w folderze z chartem
+            - "cluster/**"
     workflow_dispatch:
 
 jobs:

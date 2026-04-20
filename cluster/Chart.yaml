@@ -1,6 +1,6 @@
 apiVersion: v2
-name: postgres-cluster-wmsdev
-description: A WMS_DEV helmchart for CNCF postgres cluster deployment
+name: postgres-cluster
+description: A Helm chart for deploying resources for PostgreSQL cluster with CNFC operator
 type: application
 version: 0.1.0
 
