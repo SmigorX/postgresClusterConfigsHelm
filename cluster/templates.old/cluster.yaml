@@ -1,0 +1,123 @@
+{{- if .Values.cluster.superuserSecret.createSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+    name: {{ .Values.cluster.superuserSecret.name }}
+    namespace: {{ .Values.cluster.namespace }}
+type: Opaque
+stringData:
+    username: {{ .Values.cluster.superuserSecret.username }}
+    password: {{ .Values.cluster.superuserSecret.password }}
+---
+{{- end }}
+{{- if .Values.cluster.backup.backupCredentialsSecret.createSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+    name: {{ .Values.cluster.backup.backupCredentialsSecret.name }}
+    namespace: {{ .Values.cluster.namespace }}
+    annotations:
+        "helm.sh/hook": pre-install,pre-upgrade
+        "helm.sh/hook-weight": "-5"
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: {{ .Values.cluster.backup.backupCredentialsSecret.ACCESS_KEY_ID }}
+    ACCESS_SECRET_KEY: {{ .Values.cluster.backup.backupCredentialsSecret.ACCESS_SECRET_KEY }}
+---
+{{- end }}
+{{- if .Values.cluster.bootstrap.bootstrapCredentialsSecret.createSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+    name: {{ .Values.cluster.bootstrap.bootstrapCredentialsSecret.name }}
+    namespace: {{ .Values.cluster.namespace }}
+    annotations:
+        "helm.sh/hook": pre-install,pre-upgrade
+        "helm.sh/hook-weight": "-5"
+type: Opaque
+stringData:
+    ACCESS_KEY_ID: {{ .Values.cluster.bootstrap.bootstrapCredentialsSecret.ACCESS_KEY_ID }}
+    ACCESS_SECRET_KEY: {{ .Values.cluster.bootstrap.bootstrapCredentialsSecret.ACCESS_SECRET_KEY }}
+---
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+    name: {{ .Values.cluster.name }}
+    namespace: {{ .Values.cluster.namespace }}
+    annotations:
+      argocd.argoproj.io/sync-wave: "1"
+spec:
+    description: {{ .Values.cluster.spec.description | quote }}
+    imageName: {{ .Values.cluster.spec.image | quote }}
+    instances: {{ .Values.cluster.spec.instances }}
+    enableExternalSuperuserAccess: {{ .Values.cluster.spec.enableExternalSuperuserAccess }}
+    superuserSecret:
+        name: {{ .Values.cluster.superuserSecret.name }}
+    postgresql:
+        pg_hba:
+            - host all all 0.0.0.0/0 md5
+            - host all all ::/0 md5
+
+    {{- if .Values.cluster.bootstrap.enable }}
+    bootstrap:
+      recovery:
+        source: "bootstrap-recovery-source"
+    {{- end }}
+
+    {{- if .Values.cluster.bootstrap.enable }}
+    externalClusters:
+      - name: "bootstrap-recovery-source"
+        barmanObjectStore:
+          destinationPath: {{ .Values.cluster.bootstrap.destinationPath }}
+          endpointURL: {{ .Values.cluster.bootstrap.endpointURL }}
+          s3Credentials:
+            accessKeyId:
+              name: {{ .Values.cluster.bootstrap.bootstrapCredentialsSecret.name }}
+              key: ACCESS_KEY_ID
+            secretAccessKey:
+              name: {{ .Values.cluster.bootstrap.bootstrapCredentialsSecret.name }}
+              key: ACCESS_SECRET_KEY
+    {{- end }}
+
+    storage:
+        storageClass: {{ .Values.cluster.spec.storage.storageClass }}
+        size: {{ .Values.cluster.spec.storage.size }}
+    monitoring:
+        enablePodMonitor: {{ .Values.cluster.monitoring }}
+    {{- if .Values.cluster.backup.enable }}
+    backup:
+        barmanObjectStore:
+            destinationPath: {{ .Values.cluster.backup.destinationPath }}
+            endpointURL: {{ .Values.cluster.backup.endpointURL }}
+            s3Credentials:
+                accessKeyId:
+                    name: {{ .Values.cluster.backup.backupCredentialsSecret.name }}
+                    key: ACCESS_KEY_ID
+                secretAccessKey:
+                    name: {{ .Values.cluster.backup.backupCredentialsSecret.name }}
+                    key: ACCESS_SECRET_KEY
+            wal:
+                compression: gzip
+            data:
+                compression: gzip
+                jobs: 2
+        retentionPolicy: {{ .Values.cluster.backup.retentionPolicy | quote }}
+    {{- end }}
+---
+{{- if .Values.cluster.backup.enable }}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+    name: postgres-backup-schedule
+    namespace: {{ .Values.cluster.namespace }}
+    annotations:
+        "helm.sh/hook": post-install,post-upgrade
+        "helm.sh/hook-weight": "10"
+        argocd.argoproj.io/sync-wave: "1"
+spec:
+    schedule: {{ .Values.cluster.backup.schedule | quote }}
+    backupOwnerReference: self
+    cluster:
+        name: {{ .Values.cluster.name }}
+{{- end }}

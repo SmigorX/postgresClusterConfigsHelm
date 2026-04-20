@@ -1,0 +1,10 @@
+apiVersion: v2
+name: postgres-cluster-wmsdev
+description: A WMS_DEV helmchart for CNCF postgres cluster deployment
+type: application
+version: 0.1.0
+
+maintainers:
+    - name: Igor Janiak
+      email: igor.janiak@wmsdev.pl
+      url: https://github.com/SmigorX

@@ -1,0 +1,144 @@
+# Postgres DB cluster and related resources configuration
+cluster:
+    #name of cluster
+    name: postgres-cluster
+    #namespace for the cluster and related resources like secrets and gateway
+    namespace: postgres-cluster
+    #Description of the cluster
+    description: "WMS_DEV tools postgres cluster"
+
+    #Postgres image, pinned to specific version
+    image: ghcr.io/cloudnative-pg/postgresql:15.4
+
+    #Number of instances in the cluster
+    instances: 3
+    # MIN AVAILABLE INSTANCES (Pod Disruption Budget)
+    # Zapewnia, że podczas aktualizacji K8s zawsze np. 1 instancja będzie działać
+    minAvailable: 1
+    # RESOURCE LIMITS
+    resources:
+        requests:
+            memory: "1Gi"
+            cpu: "500m"
+        limits:
+            memory: "2Gi"
+            cpu: "1"
+
+    #Enable superuser access from outside
+    enableExternalSuperuserAccess: false
+    #Storage resource to use
+    storage:
+        storageClass: csi-rbd-sc
+        size: 10Gi
+
+    #Enable Prometheus monitoring,
+    monitoring: true
+
+#S3 backups
+backup:
+    #Whether cluster should be backend up
+    enable: true
+    #Bucket path
+    destinationPath: s3://postgres-backups/main-cluster
+    #S3 endpoint URL
+    endpointURL: http://s3.internal.wmsdev.pl:7480
+    #Backup retention time
+    retentionPolicy: "30d"
+    #Backup schedule in cron format
+    schedule: "0 0 0 * * *"
+    #Secret with S3 connection credentials
+    backupCredentialsSecret:
+        source: vault # vault or create
+        createSecret:
+            #Secret name
+            name: backup-creds
+            #S3 user connection credentials
+            ACCESS_KEY_ID: <your_access_key_id_here>
+            ACCESS_SECRET_KEY: <your_secret_access_key_here>
+        pullSecretFromVault:
+            name: backup-creds
+            path: postgres/backup-s3-credentials
+
+externalAccess:
+    enabled: true
+    endpoints:
+        #Read-write endpoint
+        - name: pg-rw
+          port: 5432
+          backendService: postgres-cluster-rw
+          ip: 10.0.10.69
+          #RW connects to primary instance
+          role: primary
+        #Read-only endpoint
+        - name: pg-ro
+          port: 5432
+          backendService: postgres-cluster-ro
+          ip: 10.0.10.67
+          #RO connects to replica instances
+          role: replica
+
+database:
+    strategy: initdb # initdb or recovery
+    recovery:
+        sourceName: s3-backup-src
+        #S3 backup source for cluster initialization
+        destinationPath: s3://postgres-backups/main-cluster
+        endpointURL: http://s3.internal.wmsdev.pl:7480
+        bootstrapS3CredentialsSecret:
+            source: vault # vault or create
+            createSecret:
+                name: bootstrap-creds
+                ACCESS_KEY_ID: <your_access_key_id_here>
+                ACCESS_SECRET_KEY: <your_secret>
+            pullSecretFromVault:
+                name: bootstrap-creds
+                path: postgres/boostrap-s3-credentials
+
+    initdb:
+        # Pierwsza baza na liście zawsze staje się bazą 'primary' dla Operatora
+        databases:
+            - name: app_db
+              owner: app_user
+              encoding: UTF8
+              locale: en_US.UTF-8
+            - name: reporting_db
+              owner: app_user
+
+        # Globalny skrypt inicjalizacyjny (np. rozszerzenia, schematy)
+        # Zostanie wrzucony do postInitApplicationSQL
+        postInitScript:
+            enabled: true
+            configMapName: postgres-init-script # Opcjonalnie, jeśli wolisz CM
+            script: |
+                CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                -- Tu już nie robisz CREATE DATABASE, bo zrobi to pętla z listy powyżej
+
+users:
+    #Postgres superuser account
+    superuserSecret:
+        source: vault # vault or create
+        #Whether chart should create the secret, set to false to use existing secret
+        createSecret:
+            #Name of the secret
+            name:
+                postgres-cluster-superuser
+                #Superuser credentials
+            username: postgres
+            password: <your_superuser_password_here>
+        pullSecretFromVault:
+            name: postgres-cluster-superuser
+            path: postgres/superuser
+
+    roles:
+        - name: app_user
+          login: true
+          superuser: false
+          credentialsSecret:
+              source: vault # vault or create
+              createSecret:
+                  name: app-user-creds
+                  username: app_user
+                  password: <your_app_user_password_here>
+              pullSecretFromVault:
+                  name: app-user-creds
+                  path: postgres/app_user
