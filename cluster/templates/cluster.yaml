@@ -1,0 +1,88 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.cluster.name }}
+  namespace: {{ .Values.cluster.namespace }}
+  annotations:
+    # ArgoCD Sync Wave 2: Klaster tworzy się po sekretach (Wave 0) i serwisach (Wave 1)
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  instances: {{ .Values.cluster.instances }}
+  imageName: {{ .Values.cluster.image }}
+  description: {{ .Values.cluster.description | quote }}
+
+  # 1. STORAGE
+  storage:
+    storageClass: {{ .Values.cluster.storage.storageClass }}
+    size: {{ .Values.cluster.storage.size }}
+
+  # 2. MONITORING
+  monitoring:
+    enablePodMonitor: {{ .Values.cluster.monitoring }}
+
+  # 3. BOOTSTRAP (Inicjalizacja pierwszej bazy)
+  bootstrap:
+    {{- if eq .Values.database.strategy "initdb" }}
+    initdb:
+      {{- $firstDb := index .Values.database.initdb.databases 0 }}
+      database: {{ $firstDb.name }}
+      owner: {{ $firstDb.owner }}
+      encoding: {{ $firstDb.encoding | default "UTF8" }}
+      locale: {{ $firstDb.locale | default "en_US.UTF-8" }}
+      # Pobieramy nazwę sekretu superużytkownika z sekcji Vault
+      secret:
+        name: {{ .Values.users.superuserSecret.pullSecretFromVault.name }}
+      {{- if .Values.database.initdb.postInitScript.enabled }}
+      postInitApplicationSQL:
+        - |
+          {{- .Values.database.initdb.postInitScript.script | nindent 10 }}
+      {{- end }}
+    {{- else if eq .Values.database.strategy "recovery" }}
+    recovery:
+      source: {{ .Values.database.recovery.sourceName }}
+    {{- end }}
+
+  # 4. MANAGED ROLES (Użytkownicy i uprawnienia z Vaulta)
+  managed:
+    roles:
+      {{- range .Values.users.roles }}
+      - name: {{ .name }}
+        login: {{ .login }}
+        superuser: {{ .superuser }}
+        passwordSecret:
+          name: {{ .credentialsSecret.pullSecretFromVault.name }}
+      {{- end }}
+
+  # 5. BACKUP (Konfiguracja S3)
+  backup:
+    barmanObjectStore:
+      destinationPath: {{ .Values.backup.destinationPath }}
+      endpointURL: {{ .Values.backup.endpointURL }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.backup.backupCredentialsSecret.pullSecretFromVault.name }}
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: {{ .Values.backup.backupCredentialsSecret.pullSecretFromVault.name }}
+          key: ACCESS_SECRET_KEY
+      retentionPolicy: {{ .Values.backup.retentionPolicy }}
+
+  # 6. EXTERNAL CLUSTERS (Wymagane tylko dla strategii recovery)
+  {{- if eq .Values.database.strategy "recovery" }}
+  externalClusters:
+    - name: {{ .Values.database.recovery.sourceName }}
+      barmanObjectStore:
+        destinationPath: {{ .Values.database.recovery.destinationPath }}
+        endpointURL: {{ .Values.database.recovery.endpointURL }}
+        s3Credentials:
+          accessKeyId:
+            name: {{ .Values.database.recovery.bootstrapS3CredentialsSecret.pullSecretFromVault.name }}
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: {{ .Values.database.recovery.bootstrapS3CredentialsSecret.pullSecretFromVault.name }}
+            key: ACCESS_SECRET_KEY
+  {{- end }}
+
+  # 7. ZASOBY (CPU/RAM)
+  resources:
+    {{- toYaml .Values.cluster.resources | nindent 4 }}

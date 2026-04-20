@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.cluster.name }}-db-init-{{ .Release.Revision }}
+  namespace: {{ .Values.cluster.namespace }}
+  annotations:
+    # Uruchom po instalacji i po każdym upgrade
+    "helm.sh/hook": post-install,post-upgrade
+    # Weight 5 zapewnia, że Job ruszy na samym końcu, gdy pody klastra już wstają
+    "helm.sh/hook-weight": "5"
+    # Usuń stary Job przed stworzeniem nowego (utrzymuje porządek w namespace)
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/sync-wave": "3"
+spec:
+  template:
+    spec:
+      containers:
+        - name: db-creator
+          image: {{ .Values.cluster.image }}
+          env:
+            # Hasło pobieramy z tego samego sekretu co operator CNPG
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.users.superuserSecret.pullSecretFromVault.name }}
+                  key: password
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              # Host to zawsze nazwa klastra z końcówką -rw (Read-Write)
+              HOST="{{ .Values.cluster.name }}-rw"
+              
+              echo "Waiting for Postgres cluster $HOST to be ready..."
+              until pg_isready -h $HOST -p 5432; do 
+                echo "Postgres is unavailable - sleeping..."
+                sleep 5
+              done
+              
+              {{- range .Values.database.initdb.databases }}
+              echo "---"
+              echo "Checking database: {{ .name }}"
+              # Sprawdzamy czy baza istnieje (zwróci 1 jeśli tak)
+              EXISTS=$(psql -h $HOST -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='{{ .name }}'")
+              
+              if [ "$EXISTS" != "1" ]; then
+                echo "Database {{ .name }} does not exist. Creating..."
+                psql -h $HOST -U postgres -c "CREATE DATABASE {{ .name }} OWNER {{ .owner }};"
+                echo "Database {{ .name }} created successfully."
+              else
+                echo "Database {{ .name }} already exists. Skipping creation."
+              fi
+              {{- end }}
+              
+              echo "---"
+              echo "All databases processed successfully."
+      restartPolicy: OnFailure
+  # Ile razy Job ma próbować w razie błędu (np. gdy klaster długo wstaje)
+  backoffLimit: 10

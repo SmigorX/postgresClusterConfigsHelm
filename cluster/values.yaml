@@ -65,14 +65,12 @@ externalAccess:
         #Read-write endpoint
         - name: pg-rw
           port: 5432
-          backendService: postgres-cluster-rw
           ip: 10.0.10.69
           #RW connects to primary instance
           role: primary
         #Read-only endpoint
         - name: pg-ro
           port: 5432
-          backendService: postgres-cluster-ro
           ip: 10.0.10.67
           #RO connects to replica instances
           role: replica

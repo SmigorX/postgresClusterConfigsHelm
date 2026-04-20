@@ -1,0 +1,29 @@
+{{- if .Values.externalAccess.enabled }}
+{{- range $index, $endpoint := .Values.externalAccess.endpoints }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Values.cluster.name }}-{{ $endpoint.name }}-external
+  namespace: {{ $.Values.cluster.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $.Values.cluster.name }}
+    endpoint-type: {{ $endpoint.role }}
+  annotations:
+    # Cilium LB IPAM - przypisanie konkretnego IP z puli
+    io.cilium/lb-ipam-ips: {{ $endpoint.ip | quote }}
+    # ArgoCD Sync Wave - upewniamy się, że bazy i serwisy idą w dobrej kolejności
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  type: LoadBalancer
+  # CloudNativePG automatycznie dodaje label role: primary/replica do swoich Podów
+  selector:
+    cnpg.io/cluster: {{ $.Values.cluster.name }}
+    role: {{ $endpoint.role }}
+  ports:
+    - name: postgres
+      port: {{ $endpoint.port }}
+      targetPort: 5432
+      protocol: TCP
+---
+{{- end }}
+{{- end }}
