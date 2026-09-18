@@ -1,7 +1,7 @@
 apiVersion: v2
 name: postgres-cluster
 description: A Helm chart for deploying resources for PostgreSQL cluster with CNFC operator
-type: application
+type: library
 version: 0.1.0
 
 maintainers:
